@@ -2,7 +2,7 @@
 
 import pytest
 
-from main import resolve_port, resolve_transport
+from mcp_config import resolve_port, resolve_transport
 
 
 class TestResolveTransport:
@@ -24,8 +24,8 @@ class TestResolveTransport:
         assert resolve_transport("  STDIO ") == "stdio"
         assert resolve_transport("Http") == "streamable-http"
 
-    def test_invalid_value_exits(self):
-        with pytest.raises(SystemExit):
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError, match="Invalid WHATSAPP_MCP_TRANSPORT"):
             resolve_transport("websocket")
 
 
@@ -38,7 +38,14 @@ class TestResolvePort:
 
     def test_valid(self):
         assert resolve_port("9000") == 9000
+        assert resolve_port("1") == 1
+        assert resolve_port("65535") == 65535
 
-    def test_invalid_exits(self):
-        with pytest.raises(SystemExit):
+    def test_non_integer_raises(self):
+        with pytest.raises(ValueError, match="Invalid WHATSAPP_MCP_PORT"):
             resolve_port("not-a-number")
+
+    def test_out_of_range_raises(self):
+        for value in ("0", "-1", "65536"):
+            with pytest.raises(ValueError, match="Invalid WHATSAPP_MCP_PORT"):
+                resolve_port(value)

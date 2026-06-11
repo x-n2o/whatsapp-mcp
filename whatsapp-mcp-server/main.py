@@ -5,6 +5,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from mcp_config import resolve_port, resolve_transport
 from whatsapp import (
     download_media as whatsapp_download_media,
 )
@@ -51,44 +52,9 @@ from whatsapp import (
     send_reaction as whatsapp_send_reaction,
 )
 
-# Accepted WHATSAPP_MCP_TRANSPORT values mapped to FastMCP transport names.
-# "http" is a friendly alias for the spec's current "streamable-http" transport.
-TRANSPORT_ALIASES = {
-    "stdio": "stdio",
-    "http": "streamable-http",
-    "streamable-http": "streamable-http",
-    "streamable_http": "streamable-http",
-    "sse": "sse",
-}
-
-
-def resolve_transport(value: str | None) -> str:
-    """Map a WHATSAPP_MCP_TRANSPORT value to a FastMCP transport name."""
-    normalized = (value or "stdio").strip().lower()
-    try:
-        return TRANSPORT_ALIASES[normalized]
-    except KeyError:
-        valid = ", ".join(sorted(TRANSPORT_ALIASES))
-        raise SystemExit(f"Invalid WHATSAPP_MCP_TRANSPORT={value!r}; valid values: {valid}")
-
-
-def resolve_port(value: str | None) -> int:
-    """Parse WHATSAPP_MCP_PORT, falling back to FastMCP's default of 8000."""
-    if not value:
-        return 8000
-    try:
-        return int(value)
-    except ValueError:
-        raise SystemExit(f"Invalid WHATSAPP_MCP_PORT={value!r}; must be an integer")
-
-
-# Initialize FastMCP server. Host/port only apply to the http/sse transports;
-# the localhost default keeps a remote server unreachable until explicitly opened up.
-mcp = FastMCP(
-    "whatsapp",
-    host=os.getenv("WHATSAPP_MCP_HOST", "127.0.0.1"),
-    port=resolve_port(os.getenv("WHATSAPP_MCP_PORT")),
-)
+# Initialize FastMCP server. Env-var handling is deferred to the __main__ block
+# so importing this module never parses env vars or exits the process.
+mcp = FastMCP("whatsapp")
 
 
 @mcp.tool()
@@ -458,14 +424,20 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    # Initialize and run the server
-    transport = resolve_transport(os.getenv("WHATSAPP_MCP_TRANSPORT"))
-    if transport == "stdio":
-        mcp.run(transport="stdio")
-    else:
-        # stdout is reserved for the protocol on stdio; log startup to stderr.
-        print(
-            f"WhatsApp MCP server listening on {mcp.settings.host}:{mcp.settings.port} via {transport}",
-            file=sys.stderr,
-        )
-        mcp.run(transport=transport)
+    # Resolve the transport first: host/port are only used (and validated) for the
+    # network transports, so a bad WHATSAPP_MCP_PORT can't break a stdio launch.
+    # The localhost default keeps a remote server unreachable until explicitly opened up.
+    try:
+        transport = resolve_transport(os.getenv("WHATSAPP_MCP_TRANSPORT"))
+        if transport != "stdio":
+            mcp.settings.host = os.getenv("WHATSAPP_MCP_HOST", "127.0.0.1")
+            mcp.settings.port = resolve_port(os.getenv("WHATSAPP_MCP_PORT"))
+            # stdout is reserved for the protocol on stdio; log startup to stderr.
+            print(
+                f"WhatsApp MCP server listening on {mcp.settings.host}:{mcp.settings.port} via {transport}",
+                file=sys.stderr,
+            )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
+    mcp.run(transport=transport)
